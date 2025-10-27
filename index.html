@@ -41,6 +41,7 @@
 
     <script>
         let xrSession = null;
+        let xrRefSpace = null;
         let isRecording = false;
         let recordingStartTime = 0;
         let leftHandData = [];
@@ -56,9 +57,10 @@
 
             try {
                 xrSession = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['hand-tracking'],
-                    optionalFeatures: ['local-floor']
+                    optionalFeatures: ['hand-tracking', 'local-floor']
                 });
+
+                xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
 
                 document.getElementById('info').style.display = 'none';
                 
@@ -67,13 +69,14 @@
 
             } catch (error) {
                 alert('Failed to start AR session: ' + error.message);
+                console.error(error);
             }
         }
 
         function onXRFrame(time, frame) {
             xrSession.requestAnimationFrame(onXRFrame);
 
-            if (!isRecording) return;
+            if (!isRecording || !xrRefSpace) return;
 
             const timestamp = Date.now() - recordingStartTime;
 
@@ -84,7 +87,7 @@
             if (leftInputSource && leftInputSource.hand) {
                 const wrist = leftInputSource.hand.get('wrist');
                 if (wrist) {
-                    const pose = frame.getJointPose(wrist, xrSession.inputSources[0].gripSpace || frame.session.viewerSpace);
+                    const pose = frame.getJointPose(wrist, xrRefSpace);
                     if (pose) {
                         const pos = pose.transform.position;
                         leftHandData.push({
@@ -104,7 +107,7 @@
             if (rightInputSource && rightInputSource.hand) {
                 const wrist = rightInputSource.hand.get('wrist');
                 if (wrist) {
-                    const pose = frame.getJointPose(wrist, xrSession.inputSources[0].gripSpace || frame.session.viewerSpace);
+                    const pose = frame.getJointPose(wrist, xrRefSpace);
                     if (pose) {
                         const pos = pose.transform.position;
                         rightHandData.push({
