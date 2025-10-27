@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest 3 Hand Tracking</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #1a1a1a;
+            color: white;
+        }
+        #info {
+            text-align: center;
+            padding: 20px;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            margin: 10px;
+            cursor: pointer;
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h1>Quest 3 Hand Tracking</h1>
+        <button id="startButton">Start AR Session</button>
+        <div id="status">Press P to start recording, S to save</div>
+    </div>
+
+    <script>
+        let xrSession = null;
+        let isRecording = false;
+        let recordingStartTime = 0;
+        let leftHandData = [];
+        let rightHandData = [];
+
+        document.getElementById('startButton').addEventListener('click', startAR);
+
+        async function startAR() {
+            if (!navigator.xr) {
+                alert('WebXR not supported');
+                return;
+            }
+
+            try {
+                xrSession = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['hand-tracking'],
+                    optionalFeatures: ['local-floor']
+                });
+
+                document.getElementById('info').style.display = 'none';
+                
+                xrSession.addEventListener('end', onSessionEnd);
+                xrSession.requestAnimationFrame(onXRFrame);
+
+            } catch (error) {
+                alert('Failed to start AR session: ' + error.message);
+            }
+        }
+
+        function onXRFrame(time, frame) {
+            xrSession.requestAnimationFrame(onXRFrame);
+
+            if (!isRecording) return;
+
+            const timestamp = Date.now() - recordingStartTime;
+
+            // Get left hand
+            const leftInputSource = xrSession.inputSources.find(
+                source => source.hand && source.handedness === 'left'
+            );
+            if (leftInputSource && leftInputSource.hand) {
+                const wrist = leftInputSource.hand.get('wrist');
+                if (wrist) {
+                    const pose = frame.getJointPose(wrist, xrSession.inputSources[0].gripSpace || frame.session.viewerSpace);
+                    if (pose) {
+                        const pos = pose.transform.position;
+                        leftHandData.push({
+                            timestamp: timestamp,
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z
+                        });
+                    }
+                }
+            }
+
+            // Get right hand
+            const rightInputSource = xrSession.inputSources.find(
+                source => source.hand && source.handedness === 'right'
+            );
+            if (rightInputSource && rightInputSource.hand) {
+                const wrist = rightInputSource.hand.get('wrist');
+                if (wrist) {
+                    const pose = frame.getJointPose(wrist, xrSession.inputSources[0].gripSpace || frame.session.viewerSpace);
+                    if (pose) {
+                        const pos = pose.transform.position;
+                        rightHandData.push({
+                            timestamp: timestamp,
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z
+                        });
+                    }
+                }
+            }
+        }
+
+        function onSessionEnd() {
+            xrSession = null;
+            document.getElementById('info').style.display = 'block';
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'p') {
+                startRecording();
+            } else if (e.key.toLowerCase() === 's') {
+                saveData();
+            }
+        });
+
+        function startRecording() {
+            isRecording = true;
+            recordingStartTime = Date.now();
+            leftHandData = [];
+            rightHandData = [];
+            console.log('Recording started');
+        }
+
+        function saveData() {
+            if (!isRecording) return;
+            
+            isRecording = false;
+            
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0];
+            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            
+            // Save left hand
+            if (leftHandData.length > 0) {
+                const leftCSV = generateCSV(leftHandData);
+                downloadCSV(leftCSV, `${dateStr}_${timeStr}_left_hand.csv`);
+            }
+            
+            // Save right hand
+            if (rightHandData.length > 0) {
+                const rightCSV = generateCSV(rightHandData);
+                downloadCSV(rightCSV, `${dateStr}_${timeStr}_right_hand.csv`);
+            }
+            
+            console.log('Data saved');
+        }
+
+        function generateCSV(data) {
+            let csv = 'Timestamp,HandX,HandY,HandZ\n';
+            data.forEach(point => {
+                csv += `${point.timestamp},${point.x},${point.y},${point.z}\n`;
+            });
+            return csv;
+        }
+
+        function downloadCSV(csvContent, filename) {
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
