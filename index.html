@@ -8,16 +8,18 @@
         body {
             margin: 0;
             font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background: #1a1a1a;
-            color: white;
         }
         #info {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             text-align: center;
             padding: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 10px;
+            z-index: 100;
         }
         button {
             padding: 15px 30px;
@@ -28,7 +30,7 @@
         #status {
             margin-top: 20px;
             font-size: 14px;
-            color: #888;
+            color: #ccc;
         }
     </style>
 </head>
@@ -39,101 +41,137 @@
         <div id="status">Press P to start recording, S to save</div>
     </div>
 
-    <script>
-        let xrSession = null;
-        let xrRefSpace = null;
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+        let camera, scene, renderer;
         let isRecording = false;
         let recordingStartTime = 0;
         let leftHandData = [];
         let rightHandData = [];
+        let hand1, hand2;
 
-        document.getElementById('startButton').addEventListener('click', startAR);
+        init();
 
-        async function startAR() {
-            if (!navigator.xr) {
-                alert('WebXR not supported');
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 1.6, 0);
+
+            // Renderer with transparent background for passthrough
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                alpha: true  // CRITICAL: transparent background for passthrough
+            });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Setup AR session
+            document.getElementById('startButton').addEventListener('click', async () => {
+                try {
+                    const supported = await navigator.xr.isSessionSupported('immersive-ar');
+                    if (!supported) {
+                        alert('AR not supported');
+                        return;
+                    }
+
+                    const session = await navigator.xr.requestSession('immersive-ar', {
+                        optionalFeatures: ['hand-tracking', 'local-floor']
+                    });
+
+                    await renderer.xr.setSession(session);
+                    document.getElementById('info').style.display = 'none';
+
+                    // Get hand objects
+                    hand1 = renderer.xr.getHand(0);
+                    hand2 = renderer.xr.getHand(1);
+                    scene.add(hand1);
+                    scene.add(hand2);
+
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                    console.error(error);
+                }
+            });
+
+            // Keyboard controls
+            document.addEventListener('keydown', (e) => {
+                if (e.key.toLowerCase() === 'p') {
+                    startRecording();
+                } else if (e.key.toLowerCase() === 's') {
+                    saveData();
+                }
+            });
+
+            // Handle resize
+            window.addEventListener('resize', onWindowResize);
+
+            // Start animation loop
+            renderer.setAnimationLoop(animate);
+        }
+
+        function animate() {
+            if (!isRecording) {
+                renderer.render(scene, camera);
                 return;
             }
 
-            try {
-                xrSession = await navigator.xr.requestSession('immersive-ar', {
-                    optionalFeatures: ['hand-tracking', 'local-floor']
-                });
-
-                xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
-
-                document.getElementById('info').style.display = 'none';
-                
-                xrSession.addEventListener('end', onSessionEnd);
-                xrSession.requestAnimationFrame(onXRFrame);
-
-            } catch (error) {
-                alert('Failed to start AR session: ' + error.message);
-                console.error(error);
-            }
-        }
-
-        function onXRFrame(time, frame) {
-            xrSession.requestAnimationFrame(onXRFrame);
-
-            if (!isRecording || !xrRefSpace) return;
-
             const timestamp = Date.now() - recordingStartTime;
 
-            // Get left hand
-            const leftInputSource = xrSession.inputSources.find(
-                source => source.hand && source.handedness === 'left'
-            );
-            if (leftInputSource && leftInputSource.hand) {
-                const wrist = leftInputSource.hand.get('wrist');
-                if (wrist) {
-                    const pose = frame.getJointPose(wrist, xrRefSpace);
-                    if (pose) {
-                        const pos = pose.transform.position;
-                        leftHandData.push({
-                            timestamp: timestamp,
-                            x: pos.x,
-                            y: pos.y,
-                            z: pos.z
-                        });
-                    }
+            // Track left hand
+            const leftController = renderer.xr.getController(0);
+            const leftHand = renderer.xr.getHand(0);
+            
+            if (leftHand && leftHand.joints && leftHand.joints['wrist']) {
+                const wrist = leftHand.joints['wrist'];
+                if (wrist.visible) {
+                    leftHandData.push({
+                        timestamp: timestamp,
+                        x: wrist.position.x,
+                        y: wrist.position.y,
+                        z: wrist.position.z
+                    });
                 }
             }
 
-            // Get right hand
-            const rightInputSource = xrSession.inputSources.find(
-                source => source.hand && source.handedness === 'right'
-            );
-            if (rightInputSource && rightInputSource.hand) {
-                const wrist = rightInputSource.hand.get('wrist');
-                if (wrist) {
-                    const pose = frame.getJointPose(wrist, xrRefSpace);
-                    if (pose) {
-                        const pos = pose.transform.position;
-                        rightHandData.push({
-                            timestamp: timestamp,
-                            x: pos.x,
-                            y: pos.y,
-                            z: pos.z
-                        });
-                    }
+            // Track right hand
+            const rightHand = renderer.xr.getHand(1);
+            
+            if (rightHand && rightHand.joints && rightHand.joints['wrist']) {
+                const wrist = rightHand.joints['wrist'];
+                if (wrist.visible) {
+                    rightHandData.push({
+                        timestamp: timestamp,
+                        x: wrist.position.x,
+                        y: wrist.position.y,
+                        z: wrist.position.z
+                    });
                 }
             }
+
+            renderer.render(scene, camera);
         }
 
-        function onSessionEnd() {
-            xrSession = null;
-            document.getElementById('info').style.display = 'block';
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
-
-        // Keyboard controls
-        document.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'p') {
-                startRecording();
-            } else if (e.key.toLowerCase() === 's') {
-                saveData();
-            }
-        });
 
         function startRecording() {
             isRecording = true;
@@ -164,7 +202,7 @@
                 downloadCSV(rightCSV, `${dateStr}_${timeStr}_right_hand.csv`);
             }
             
-            console.log('Data saved');
+            console.log('Data saved. Left: ' + leftHandData.length + ' points, Right: ' + rightHandData.length + ' points');
         }
 
         function generateCSV(data) {
